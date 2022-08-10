@@ -61,7 +61,7 @@ def _rsync(source_paths: Sequence[Path], dest_path: Path) -> Iterator[Union[str,
             break
         if char:
             char_buffer += char
-            if char == "\r" or char == "\n":
+            if char in ["\r", "\n"]:
                 yield char_buffer
                 char_buffer = ""
         sys.stdout.flush()
@@ -184,24 +184,23 @@ class Line:
         """
         if data in _transfer_line_cache:
             return _transfer_line_cache[data]
-        else:
-            # works with in-progress or completed stats lines
-            line = data.strip().split("(")[0].split()
-            result = True
-            # TODO: Clean all of this up into a single regex...maybe?
-            if len(line) != 4:
-                result = False
-            elif not re.match(r"^\d+:\d\d:\d\d$", line[3]):
-                result = False
-            elif not line[2].endswith("/s"):
-                result = False
-            elif not line[1].endswith("%"):
-                result = False
-            elif re.search(r"[^\d,]", line[0]):
-                result = False
+        # works with in-progress or completed stats lines
+        line = data.strip().split("(")[0].split()
+        result = True
+        # TODO: Clean all of this up into a single regex...maybe?
+        if len(line) != 4:
+            result = False
+        elif not re.match(r"^\d+:\d\d:\d\d$", line[3]):
+            result = False
+        elif not line[2].endswith("/s"):
+            result = False
+        elif not line[1].endswith("%"):
+            result = False
+        elif re.search(r"[^\d,]", line[0]):
+            result = False
 
-            _transfer_line_cache[data] = result
-            return result
+        _transfer_line_cache[data] = result
+        return result
 
     @cached_property
     def is_completed_stats_line(self) -> bool:
@@ -212,17 +211,14 @@ class Line:
             return False
 
         need_one_of = ["ir-chk", "to-chk"]
-        if not any(check in self.raw_line for check in need_one_of):
+        if all(check not in self.raw_line for check in need_one_of):
             return False
 
         if not self._is_transfer_stats(self.raw_line):
             return False
 
         line = self.raw_line.split(" (")
-        if not len(line) == 2:
-            return False
-
-        return True
+        return len(line) == 2
 
     @cached_property
     def is_progress_stats_line(self) -> bool:
@@ -427,11 +423,13 @@ def calculate_transferred(
     last_transferred: int = 0,
     last_transferred_was_completed_line: Optional[bool] = False,
 ) -> int:
-    if not last_transferred and not total_transferred:
+    if last_transferred or total_transferred:
+        return (
+            total_transferred + current_transferred
+            if last_transferred_was_completed_line
+            else total_transferred - last_transferred + current_transferred
+        )
+
+    else:
         # This will be the case on our first stats line
         return current_transferred
-
-    if last_transferred_was_completed_line:
-        return total_transferred + current_transferred
-    else:
-        return total_transferred - last_transferred + current_transferred
